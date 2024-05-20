@@ -1,0 +1,29 @@
+{
+  "name": "signalk-racing-calculator",
+  "version": "0.1.0",
+  "description": "Signal K Node Server plugin to provide data relevant for sailboat racing",
+  "main": "dist/index.js",
+  "scripts": {
+    "lint": "biome ci . --changed",
+    "format": "biome format . --changed --write",
+    "build": "tsc",
+    "prepare": "tsc"
+  },
+  "keywords": [
+    "signalk-node-server-plugin",
+    "signalk-category-instruments"
+  ],
+  "author": "Alex Tomberg",
+  "license": "ISC",
+  "dependencies": {
+    "@signalk/server-api": "^2.3.0",
+    "@types/geojson": "^7946.0.14"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21"
+  },
+  "repository": {
+    "type": "git",
+    "url": ""
+  }
+}
