@@ -1,10 +1,8 @@
 import { Plugin, PluginServerApp } from '@signalk/server-api';
 import { Race, Course } from './race';
-import { degToRad, distanceToSegment, haversineDistanceBetween, wsg84DistanceBetween } from './distances';
+import { degToRad, distanceToSegment, haversineDistanceBetween, wsg84DistanceBetween, Solution } from './distances';
 import { Point } from 'geojson';
 import * as openapi from './api.json'
-
-let distanceBetween = haversineDistanceBetween
 
 interface SignalKServer extends PluginServerApp {
     debug: (msg: string) => void,
@@ -23,6 +21,8 @@ interface SignalKServer extends PluginServerApp {
 
 interface TypedPlugin extends Plugin {
     started: boolean,
+    distBtw: (x: Point, y: Point) => Solution,
+    updateFreq: number,
     distanceToDetectLegCompletion: number,
     raceCourses: Record<string, Course>
     race: Race
@@ -44,6 +44,8 @@ function pluginConstructor(app: SignalKServer): Plugin {
         name: 'Signal K Racing Calculator',
 
         started: false,
+        updateFreq: 500,
+        distBtw: haversineDistanceBetween,
         distanceToDetectLegCompletion: 30,
         raceCourses: {},
         race: new Race(),
@@ -52,10 +54,10 @@ function pluginConstructor(app: SignalKServer): Plugin {
             if ('distanceMetric' in settings) {
                 switch (settings.distanceMetric) {
                     case 'wsg84':
-                        distanceBetween = wsg84DistanceBetween;
+                        plugin.distBtw = wsg84DistanceBetween;
                         break;
                     default:
-                        distanceBetween = haversineDistanceBetween;
+                        plugin.distBtw = haversineDistanceBetween;
                         break;
                 }
             }
@@ -115,43 +117,50 @@ function pluginConstructor(app: SignalKServer): Plugin {
                 try {
                     plugin.race.startTimestamp = Date.now() + value * 1000
                     plugin.race.status = 'pre-start'
-                    app.handleMessage('navigation.racing', {
-                        updates: [{
-                            values: [{
-                                path: 'navigation.racing.raceStatus',
-                                value: 'pre-start'
-                            }]
-                        }]
+                    plugin.race.currentLegIndex = 0
+                    const values = [{
+                        path: 'navigation.racing.raceStatus',
+                        value: String(plugin.race.status)
+                    }]
+
+                    const leg = plugin.race.currentLeg
+                    if (leg) values.push({
+                        path: 'navigation.racing.markName',
+                        value: leg.waypointMarkName
                     })
+                    app.handleMessage('navigation.racing', { updates: [{ values }] })
+
                     app.debug(`SetStartTime @ ${JSON.stringify(new Date(plugin.race.startTimestamp))}`)
                     return { state: 'SUCCESS', statusCode: 200 }
                 } catch {
                     return { state: 'COMPLETED', statusCode: 400 }
                 }
             }, 'racing.startCountdown');
-            app.registerPutHandler('vessels.self', 'racing.cancelCountdown', (_c, _p, _v, _cb) => {
+            app.registerPutHandler('vessels.self', 'racing.cancelRace', (_c, _p, _v, _cb) => {
                 try {
                     plugin.race.startTimestamp = undefined
                     plugin.race.status = 'setup'
                     plugin.race.currentLegIndex = 0
-                    app.handleMessage('navigation.racing', {
-                        updates: [{
-                            values: [{
-                                path: 'navigation.racing.timeToStart',
-                                value: 300
-                            },
-                            {
-                                path: 'navigation.racing.raceStatus',
-                                value: plugin.race.status
-                            }]
-                        }]
-                    });
+                    const values = [{
+                        path: 'navigation.racing.timeToStart',
+                        value: 300
+                    }, {
+                        path: 'navigation.racing.raceStatus',
+                        value: String(plugin.race.status)
+                    }]
+
+                    const leg = plugin.race.currentLeg
+                    if (leg) values.push({
+                        path: 'navigation.racing.markName',
+                        value: leg.waypointMarkName
+                    })
+                    app.handleMessage('navigation.racing', { updates: [{ values }] })
                     app.debug(`Race cancelled`)
                     return { state: 'SUCCESS', statusCode: 200 }
                 } catch {
                     return { state: 'COMPLETED', statusCode: 400 }
                 }
-            }, 'racing.cancelCountdown');
+            }, 'racing.cancelRace');
             app.registerPutHandler('vessels.self', 'racing.pingBoat', (_c, _p, _v, _cb) => {
                 plugin.race.startline.boatEnd = currentPosition()
                 app.debug(`PingBoat @ ${JSON.stringify(plugin.race.startline.boatEnd)}`)
@@ -173,8 +182,9 @@ function pluginConstructor(app: SignalKServer): Plugin {
 
             app.registerPutHandler('vessels.self', 'racing.selectRaceCourse', (_c, _p, value, _cb) => {
                 try {
-                    if (value in plugin.raceCourses) {
+                    if (value in plugin.raceCourses && plugin.race.status !== 'racing') {
                         plugin.race.course = plugin.raceCourses[value]
+                        plugin.race.currentLegIndex = 0
                         app.handleMessage('navigation.racing', {
                             updates: [{
                                 values: [{
@@ -238,7 +248,7 @@ function pluginConstructor(app: SignalKServer): Plugin {
                 if (plugin.race.startline.boatEnd && selfPosition) {
                     valuesToEmit.push({
                         path: 'navigation.racing.distanceBoatEnd',
-                        value: distanceBetween(selfPosition, plugin.race.startline.boatEnd).distance
+                        value: plugin.distBtw(selfPosition, plugin.race.startline.boatEnd).distance
                     })
                     if (plugin.race.startline.pinEnd) {
                         valuesToEmit.push({
@@ -250,10 +260,10 @@ function pluginConstructor(app: SignalKServer): Plugin {
                     }
                 }
 
-                if (plugin.race.startline.pinEnd !== undefined && selfPosition !== undefined) {
+                if (plugin.race.startline.pinEnd && selfPosition) {
                     valuesToEmit.push({
                         path: 'navigation.racing.distancePinEnd',
-                        value: distanceBetween(selfPosition, plugin.race.startline.pinEnd).distance
+                        value: plugin.distBtw(selfPosition, plugin.race.startline.pinEnd).distance
                     })
                 }
 
@@ -262,7 +272,7 @@ function pluginConstructor(app: SignalKServer): Plugin {
 
                     if (selfPosition && selfCog && selfSog) {
 
-                        const selfToMark = distanceBetween(selfPosition, leg.waypointMarkPoint)
+                        const selfToMark = plugin.distBtw(selfPosition, leg.waypointMarkPoint)
                         const bearingToMark = (selfToMark.initialBearing - selfCog + 2 * Math.PI) % (2 * Math.PI)
 
                         valuesToEmit.push({
@@ -303,7 +313,7 @@ function pluginConstructor(app: SignalKServer): Plugin {
                         values: valuesToEmit
                     }]
                 });
-            }, 500)
+            }, plugin.updateFreq)
 
         },
         stop: () => {

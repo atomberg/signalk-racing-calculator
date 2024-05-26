@@ -189,12 +189,12 @@
                 }
             }
         },
-        "/cancelCountdown": {
+        "/cancelRace": {
             "put": {
                 "tags": [
                     "Race Timer"
                 ],
-                "summary": "Cancel the race countdown.",
+                "summary": "Cancel the race countdown and reset race status.",
                 "responses": {
                     "default": {
                         "$ref": "#/components/responses/200OKResponse"
