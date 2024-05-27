@@ -180,7 +180,7 @@ function pluginConstructor(app: SignalKServer): Plugin {
                 }
             }, 'racing.pingPin');
 
-            app.registerPutHandler('vessels.self', 'racing.selectRaceCourse', (_c, _p, value, _cb) => {
+            app.registerPutHandler('vessels.self', 'racing.selectCourse', (_c, _p, value, _cb) => {
                 try {
                     if (value in plugin.raceCourses && plugin.race.status !== 'racing') {
                         plugin.race.course = plugin.raceCourses[value]
@@ -201,7 +201,7 @@ function pluginConstructor(app: SignalKServer): Plugin {
                 } catch {
                     return { state: 'COMPLETED', statusCode: 400 }
                 }
-            }, 'racing.selectRaceCourse');
+            }, 'racing.selectCourse');
             app.registerPutHandler('vessels.self', 'racing.nextWaypoint', (_c, _p, _v, _cb) => {
                 try {
                     const nextLeg = plugin.race.nextLeg()
@@ -291,9 +291,10 @@ function pluginConstructor(app: SignalKServer): Plugin {
                             path: 'navigation.racing.vmgToMark',
                             value: selfSog * Math.cos(bearingToMark)
                         })
+                        const vmgDownwind = selfSog * Math.cos((plugin.race.course.bearing - selfCog + 2 * Math.PI) % (2 * Math.PI))
                         valuesToEmit.push({
                             path: 'navigation.racing.vmg',
-                            value: selfSog * Math.cos((plugin.race.course.bearing - selfCog + 2 * Math.PI) % (2 * Math.PI))
+                            value: plugin.race.currentLeg.direction === 'downwind' ? vmgDownwind : -vmgDownwind
                         })
 
                         if (selfToMark.distance < plugin.distanceToDetectLegCompletion) {
